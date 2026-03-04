@@ -1,0 +1,158 @@
+import pandas as pd
+from urllib.error import HTTPError
+
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+
+# ============================================================
+# 1) LER DADOS DO GOOGLE SHEETS (com fallback)
+# ============================================================
+SHEET_ID = "1P9KCHIZn5ZxX4A2Cj4wTJrzeeOWtbgqksubfC9GFeMo"
+GID = "0"  # troque se sua aba for outra (olhe na URL: ...#gid=XXXX)
+
+url_export_csv = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID}"
+url_gviz_csv   = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&gid={GID}"
+
+def ler_google_sheets():
+    try:
+        print("Tentando ler via /export ...")
+        return pd.read_csv(url_export_csv)
+    except HTTPError as e:
+        print("Falhou via /export:", e)
+
+    try:
+        print("Tentando ler via GVIZ ...")
+        return pd.read_csv(url_gviz_csv)
+    except HTTPError as e:
+        print("Falhou via GVIZ:", e)
+
+    raise RuntimeError(
+        "\n❌ Não consegui ler sua planilha.\n"
+        "Verifique:\n"
+        "1) Compartilhar -> 'Qualquer pessoa com o link' -> Leitor\n"
+        "2) O GID está correto (na URL da aba aparece gid=XXXX)\n"
+        f"\nURLs testadas:\n- {url_export_csv}\n- {url_gviz_csv}\n"
+    )
+
+df = ler_google_sheets()
+
+print("\nColunas lidas:", list(df.columns))
+display(df.head())
+
+# ============================================================
+# 2) PREPARAR X (features) e y (classe)
+# ============================================================
+target_col = "classificado_top6"  # sua coluna alvo
+
+if target_col not in df.columns:
+    raise ValueError(f"❌ Não achei a coluna alvo '{target_col}'. Colunas: {list(df.columns)}")
+
+# separa X e y
+X_raw = df.drop(columns=[target_col]).copy()
+y = pd.to_numeric(df[target_col], errors="coerce")
+
+# ✅ Remove colunas texto automaticamente (ex.: 'time')
+# Mantém só colunas numéricas como features
+X = X_raw.select_dtypes(include="number").copy()
+
+# converte tudo numérico (extra segurança)
+X = X.apply(pd.to_numeric, errors="coerce")
+
+# remove linhas inválidas
+mask = X.notna().all(axis=1) & y.notna()
+X = X.loc[mask]
+y = y.loc[mask].astype(int)
+
+print("\nLinhas finais:", len(X))
+print("Features numéricas usadas:", list(X.columns))
+print("Distribuição das classes:", y.value_counts().to_dict())
+
+if len(X) < 5:
+    raise ValueError("❌ Poucas linhas válidas após limpeza. Verifique dados/colunas.")
+
+# ============================================================
+# 3) FUNÇÃO DE AVALIAÇÃO
+# ============================================================
+def avaliar(nome, model, X_train, X_test, y_train, y_test):
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+
+    acc = accuracy_score(y_test, y_pred)
+    print(f"\n==============================")
+    print(nome)
+    print(f"Acurácia: {acc:.4f}")
+    print("Matriz de confusão:\n", confusion_matrix(y_test, y_pred))
+    print("Relatório:\n", classification_report(y_test, y_pred, digits=4))
+    return acc
+
+# ============================================================
+# 4) CONFIGURAÇÕES A TESTAR
+# ============================================================
+test_sizes = [0.2, 0.3]  # 80/20 e 70/30
+k_values = [3, 5, 7, 9]
+depth_values = [3, 5, 10, None]
+
+# conjuntos de features (só usa as que existem)
+feature_sets = {
+    "todas_features": list(X.columns),
+    "sem_ano": [c for c in X.columns if c != "ano"],
+    "basico_pontos_gols": [c for c in ["pontos", "gols_pro", "gols_contra"] if c in X.columns],
+    "resultado_partidas": [c for c in ["vitorias", "empates", "derrotas", "pontos"] if c in X.columns],
+}
+
+# ============================================================
+# 5) RODAR EXPERIMENTOS
+# ============================================================
+resultados = []
+
+for test_size in test_sizes:
+    for fs_name, cols in feature_sets.items():
+        if len(cols) == 0:
+            continue
+
+        X_fs = X[cols].copy()
+
+        # stratify só se tiver ao menos 2 classes
+        strat = y if y.nunique() > 1 else None
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_fs, y, test_size=test_size, random_state=42, stratify=strat
+        )
+
+        # -------------------------
+        # KNN (com normalização)
+        # -------------------------
+        for k in k_values:
+            knn = Pipeline([
+                ("scaler", StandardScaler()),
+                ("model", KNeighborsClassifier(n_neighbors=k))
+            ])
+            acc = avaliar(
+                f"KNN | k={k} | split={int((1-test_size)*100)}/{int(test_size*100)} | features={fs_name}",
+                knn, X_train, X_test, y_train, y_test
+            )
+            resultados.append(("KNN", fs_name, test_size, f"k={k}", acc))
+
+        # -------------------------
+        # Árvore de Decisão
+        # -------------------------
+        for depth in depth_values:
+            tree = DecisionTreeClassifier(max_depth=depth, random_state=42)
+            acc = avaliar(
+                f"Árvore | max_depth={depth} | split={int((1-test_size)*100)}/{int(test_size*100)} | features={fs_name}",
+                tree, X_train, X_test, y_train, y_test
+            )
+            resultados.append(("Arvore", fs_name, test_size, f"max_depth={depth}", acc))
+
+# ============================================================
+# 6) TOP 10 MELHORES RESULTADOS
+# ============================================================
+res_df = pd.DataFrame(resultados, columns=["modelo", "features", "test_size", "params", "acuracia"])
+res_df = res_df.sort_values("acuracia", ascending=False)
+
+print("\n\n===== TOP 10 MELHORES CONFIGURAÇÕES =====")
+display(res_df.head(10))
