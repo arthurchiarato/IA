@@ -1,5 +1,8 @@
 # Classificação de Gênero de Voz por Inteligência Artificial
 
+## Integrante
+Arthur Chiarato Gorini Gomes RA: 23016363-2
+
 ## 1. Contextualização
 A IA está presente em diversas aplicações que utilizam reconhecimento de voz. Neste trabalho foi desenvolvido um sistema capaz de identificar se uma voz pertence a uma pessoa do sexo masculino ou feminino utilizando técnicas de aprendizado de máquina.
 
