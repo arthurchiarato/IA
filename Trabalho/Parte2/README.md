@@ -1,7 +1,7 @@
 # Classificação de Vozes Masculinas e Femininas utilizando KNN e SVM
 
 ## Integrantes
-- Arthur Gorini
+- Arthur Chiarato Gorini Gomes RA: 23016363-2
 
 ## Contextualização
 A Inteligência Artificial está presente em diversas aplicações que utilizam reconhecimento de voz. Neste trabalho foi desenvolvido um sistema capaz de identificar se uma voz pertence a uma pessoa do sexo masculino ou feminino utilizando técnicas de aprendizado de máquina.
